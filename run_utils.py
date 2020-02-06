@@ -6,10 +6,9 @@ import time
 import datetime
 from jsmin import jsmin
 import json
-import random
 
-import print_utils
-import python_utils
+from . import print_utils
+from . import python_utils
 
 # Stolen from Docker:
 NAME_SET = set([

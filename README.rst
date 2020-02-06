@@ -3,7 +3,7 @@ Various utilities for deep learning projects.
 
 ## print_utils
 
-Print in color: warnuing, error, info, etc. messages.
+Print in color: warning, error, info, etc. messages.
 
 ## python_utils
 
