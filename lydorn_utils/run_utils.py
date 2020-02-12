@@ -647,7 +647,11 @@ def save_config(config, config_dirpath):
 
 
 def load_config(config_name="config", config_dirpath=""):
-    config_filepath = os.path.join(config_dirpath, config_name + ".json")
+    if os.path.splitext(config_name)[1] == ".json":
+        config_filepath = os.path.join(config_dirpath, config_name)
+    else:
+        config_filepath = os.path.join(config_dirpath, config_name + ".json")
+
     try:
         with open(config_filepath, 'r') as f:
             minified = jsmin(f.read())
