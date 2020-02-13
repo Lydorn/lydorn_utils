@@ -655,7 +655,14 @@ def load_config(config_name="config", config_dirpath=""):
     try:
         with open(config_filepath, 'r') as f:
             minified = jsmin(f.read())
-            config = json.loads(minified)
+            try:
+                config = json.loads(minified)
+            except json.decoder.JSONDecodeError as e:
+                print_utils.print_error("ERROR: Parsing config failed:")
+                print(e)
+                print_utils.print_info("Minified JSON causing the problem:")
+                print(str(minified))
+                exit()
         return config
     except FileNotFoundError:
         if config_name == "config" and config_dirpath == "":
