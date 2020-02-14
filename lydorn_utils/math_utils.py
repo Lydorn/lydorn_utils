@@ -13,7 +13,9 @@ from . import image_utils
 CV2 = False
 if python_utils.module_exists("cv2"):
     import cv2
+
     CV2 = True
+
 
 # import multiprocessing
 #
@@ -79,13 +81,15 @@ class DispFieldMapsPatchCreator:
         self.gauss_sig_scaling = gauss_sig_scaling
 
         self.current_patch_index = -1
-        self.patch_boundingboxes = image_utils.compute_patch_boundingboxes(self.global_shape, stride=self.patch_res, patch_res=self.patch_res)
+        self.patch_boundingboxes = image_utils.compute_patch_boundingboxes(self.global_shape, stride=self.patch_res,
+                                                                           patch_res=self.patch_res)
         self.disp_maps = None
         self.create_new_disp_maps()
 
     def create_new_disp_maps(self):
         print("DispFieldMapsPatchCreator.create_new_disp_maps()")
-        self.disp_maps = create_displacement_field_maps(self.global_shape, self.map_count, self.modes, self.gauss_mu_range, self.gauss_sig_scaling)
+        self.disp_maps = create_displacement_field_maps(self.global_shape, self.map_count, self.modes,
+                                                        self.gauss_mu_range, self.gauss_sig_scaling)
 
     def get_patch(self):
         self.current_patch_index += 1
@@ -95,8 +99,10 @@ class DispFieldMapsPatchCreator:
             self.create_new_disp_maps()
 
         patch_boundingbox = self.patch_boundingboxes[self.current_patch_index]
-        patch_disp_maps = self.disp_maps[:, patch_boundingbox[0]:patch_boundingbox[2], patch_boundingbox[1]:patch_boundingbox[3], :]
+        patch_disp_maps = self.disp_maps[:, patch_boundingbox[0]:patch_boundingbox[2],
+                          patch_boundingbox[1]:patch_boundingbox[3], :]
         return patch_disp_maps
+
 
 # --- --- #
 
@@ -149,7 +155,6 @@ def multivariate_gaussian(pos, mu, sigma):
 
     """
 
-
     n = mu.shape[0]
     sigma_det = np.linalg.det(sigma)
     sigma_inv = np.linalg.inv(sigma)
@@ -184,8 +189,8 @@ def create_multivariate_gaussian_mixture_map(shape, mode_count, mu_range, sig_sc
     dtype = np.float32
 
     mu_scale = mu_range[1] - mu_range[0]
-    row = np.linspace(mu_range[0], mu_range[1], mu_scale*shape[0]/downsample_factor, dtype=dtype)
-    col = np.linspace(mu_range[0], mu_range[1], mu_scale*shape[1]/downsample_factor, dtype=dtype)
+    row = np.linspace(mu_range[0], mu_range[1], mu_scale * shape[0] / downsample_factor, dtype=dtype)
+    col = np.linspace(mu_range[0], mu_range[1], mu_scale * shape[1] / downsample_factor, dtype=dtype)
     rr, cc = np.meshgrid(row, col, indexing='ij')
     grid = np.stack([rr, cc], axis=2)
 
@@ -237,7 +242,7 @@ def create_multivariate_gaussian_mixture_map(shape, mode_count, mu_range, sig_sc
     gaussian_mixture[:, :, 1] = stretch(gaussian_mixture[:, :, 1])
 
     # Crop
-    gaussian_mixture = crop_center(gaussian_mixture, shape//downsample_factor)
+    gaussian_mixture = crop_center(gaussian_mixture, shape // downsample_factor)
 
     # plot_field_map(gaussian_mixture)
 
@@ -375,7 +380,7 @@ def circular_diff(a1, a2, range_max):
     :param range_max:
     :return:
     """
-    d = range_max/2 - np.abs(np.abs(a1 - a2) - range_max/2)
+    d = range_max / 2 - np.abs(np.abs(a1 - a2) - range_max / 2)
     return d
 
 
@@ -395,6 +400,7 @@ def region_growing_1d(array, max_range, max_skew):
     :param max_mean_median_diff:
     :return:
     """
+
     def verify_predicate(region):
         """
         Region is sorted
@@ -414,10 +420,10 @@ def region_growing_1d(array, max_range, max_skew):
     labels[region_start] = region_label
     centers = []
     for i in range(1, len(sorted_array)):
-        region = sorted_array[region_start:i+1]
+        region = sorted_array[region_start:i + 1]
         if not verify_predicate(region):
             # End current region
-            median = region[len(region)//2]  # region is sorted
+            median = region[len(region) // 2]  # region is sorted
             centers.append(median)
             # Begin a new region
             region_start = i
@@ -426,6 +432,36 @@ def region_growing_1d(array, max_range, max_skew):
     centers.append(median)
 
     return labels[invert_permutation(p)], centers
+
+
+def bilinear_interpolate(im, pos):
+    # From https://gist.github.com/peteflorence/a1da2c759ca1ac2b74af9a83f69ce20e
+    x = pos[..., 1]
+    y = pos[..., 0]
+
+    x0 = np.floor(x).astype(int)
+    x1 = x0 + 1
+    y0 = np.floor(y).astype(int)
+    y1 = y0 + 1
+
+    x0_clipped = np.clip(x0, 0, im.shape[1] - 1)
+    x1_clipped = np.clip(x1, 0, im.shape[1] - 1)
+    y0_clipped = np.clip(y0, 0, im.shape[0] - 1)
+    y1_clipped = np.clip(y1, 0, im.shape[0] - 1)
+
+    Ia = im[y0_clipped, x0_clipped]
+    Ib = im[y1_clipped, x0_clipped]
+    Ic = im[y0_clipped, x1_clipped]
+    Id = im[y1_clipped, x1_clipped]
+
+    wa = (x1 - x) * (y1 - y)
+    wb = (x1 - x) * (y - y0)
+    wc = (x - x0) * (y1 - y)
+    wd = (x - x0) * (y - y0)
+
+    value = (Ia.T * wa).T + (Ib.T * wb).T + (Ic.T * wc).T + (Id.T * wd).T
+
+    return value
 
 
 def main():
@@ -442,7 +478,7 @@ def main():
     # d = circular_diff(a1, a2, range_max)
     # print(d)
 
-    array = np.concatenate([np.arange(1, 1.01, 0.001), np.arange(0, np.pi/2, np.pi/100)])
+    array = np.concatenate([np.arange(1, 1.01, 0.001), np.arange(0, np.pi / 2, np.pi / 100)])
     print(array)
     labels = region_growing_1d(array, max_range=np.pi / 10, max_skew=1)
     print(labels)
