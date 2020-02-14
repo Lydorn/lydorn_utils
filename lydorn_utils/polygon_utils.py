@@ -290,6 +290,13 @@ def convert_to_image_patch_space(polygon_image_space, bounding_box):
     return polygon_image_patch_space
 
 
+def translate_polygons(polygons, translation):
+    for polygon in polygons:
+        polygon[:, 0] += translation[0]
+        polygon[:, 1] += translation[1]
+    return polygons
+
+
 def strip_redundant_vertex(vertices, epsilon=1):
     assert len(vertices.shape) == 2  # Is a polygon
     new_vertices = vertices
