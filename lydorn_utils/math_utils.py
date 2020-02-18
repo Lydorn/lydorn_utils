@@ -74,6 +74,27 @@ class AverageMeter(object):
         return fmtstr.format(**self.__dict__)
 
 
+class RunningDecayingAverage(object):
+    """
+    Updates average with val*(1 - decay) + avg*decay
+    """
+    def __init__(self, decay, init_val=0):
+        assert 0 < decay < 1
+        self.decay = decay
+        self.init_val = init_val
+        self.val = self.avg = self.init_val
+
+    def reset(self):
+        self.val = self.avg = self.init_val
+
+    def update(self, val):
+        self.val = val
+        self.avg = (1 - self.decay)*val + self.decay*self.avg
+
+    def get_avg(self):
+        return self.avg
+
+
 class DispFieldMapsPatchCreator:
     def __init__(self, global_shape, patch_res, map_count, modes, gauss_mu_range, gauss_sig_scaling):
         self.global_shape = global_shape
