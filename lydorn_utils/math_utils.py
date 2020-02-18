@@ -49,7 +49,7 @@ if python_utils.module_exists("cv2"):
 class AverageMeter(object):
     """Computes and stores the average and current value"""
 
-    def __init__(self, name, init_val=0, fmt=':f'):
+    def __init__(self, name="", init_val=0, fmt=':f'):
         self.name = name
         self.init_val = init_val
         self.fmt = fmt
