@@ -646,7 +646,7 @@ def save_config(config, config_dirpath):
     # shutil.copyfile(os.path.join(project_dir, "config.py"), os.path.join(current_logs_dir, "config.py"))
 
 
-def load_config(config_name="config", config_dirpath=""):
+def load_config(config_name="config", config_dirpath="", try_default=False):
     if os.path.splitext(config_name)[1] == ".json":
         config_filepath = os.path.join(config_dirpath, config_name)
     else:
@@ -669,8 +669,12 @@ def load_config(config_name="config", config_dirpath=""):
             print_utils.print_warning(
                 "WARNING: the default config file was not found....")
             return None
-        else:
+        elif try_default:
             print_utils.print_warning(
                 "WARNING: config file {} was not found, opening default config file config.json instead.".format(
                     config_filepath))
             return load_config()
+        else:
+            print_utils.print_warning(
+                "WARNING: config file {} was not found.".format(config_filepath))
+            return None
