@@ -130,6 +130,12 @@ class DispFieldMapsPatchCreator:
 
 # --- --- #
 
+def compute_crossfield_c0c2(u, v):
+    c0 = np.power(u, 2) * np.power(v, 2)
+    c2 = - (np.power(u, 2) + np.power(v, 2))
+    crossfield = np.stack([c0.real, c0.imag, c2.real, c2.imag], axis=-1)
+    return crossfield
+
 
 def compute_crossfield_uv(c0c2):
     c0 = c0c2[..., 0] + 1j * c0c2[..., 1]
