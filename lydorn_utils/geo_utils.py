@@ -4,10 +4,13 @@ import json
 import os.path
 from tqdm import tqdm
 
+import rasterio
 from osgeo import gdal, ogr
 from osgeo import osr
 import overpy
 from pyproj import Proj, transform
+import fiona
+import shapely.geometry
 
 from . import polygon_utils
 from . import math_utils
@@ -253,6 +256,9 @@ def save_shapefile_from_polygons(polygons, image_filepath, output_shapefile_file
     """
     https://gis.stackexchange.com/a/52708/8104
     """
+    assert type(polygons) == list and type(polygons[0]) == np.ndarray and \
+           len(polygons[0].shape) == 2 and polygons[0].shape[1] == 2, \
+        "polygons should be a list of numpy arrays with shape (N, 2)"
     if properties_list is not None:
         assert len(polygons) == len(properties_list), "polygons and properties_list should have the same length"
 
@@ -313,6 +319,24 @@ def save_shapefile_from_polygons(polygons, image_filepath, output_shapefile_file
 
     # Save and close everything
     ds = layer = feat = geom = None
+
+
+def save_shapefile_from_shapely_polygons(polygons, output_shapefile_filepath, as_shapefile):
+    # Define a polygon feature geometry with one attribute
+    schema = {
+        'geometry': 'Polygon',
+        'properties': {'id': 'int'},
+    }
+
+    # Write a new Shapefile
+    with fiona.open(as_shapefile, 'r') as source:
+        with fiona.open(output_shapefile_filepath, 'w', driver='ESRI Shapefile', schema=schema, crs=source.meta["crs"]) as c:
+            ## If there are multiple geometries, put the "for" loop here
+            for id, polygon in enumerate(polygons):
+                c.write({
+                    'geometry': shapely.geometry.mapping(polygon),
+                    'properties': {'id': id},
+                })
 
 
 def indices_of_biggest_intersecting_polygon(polygon_list):
