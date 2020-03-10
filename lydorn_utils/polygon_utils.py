@@ -463,6 +463,8 @@ def crop_polygon_to_patch(polygon, bounding_box):
 
 
 def crop_polygon_to_patch_if_touch(polygon, bounding_box):
+    assert type(polygon) == np.ndarray, "polygon should be a numpy array, not {}".format(type(polygon))
+    assert len(polygon.shape) == 2 and polygon.shape[1] == 2, "polygon should be of shape (N, 2), not {}".format(polygon.shape)
     # Verify that at least one vertex is inside bounding_box
     polygon_touches_patch = np.any(
         np.logical_and(
@@ -477,6 +479,7 @@ def crop_polygon_to_patch_if_touch(polygon, bounding_box):
 
 
 def crop_polygons_to_patch_if_touch(polygons, bounding_box, return_indices=False):
+    assert type(polygons) == list, "polygons should be a list"
     if return_indices:
         indices = []
     cropped_polygons = []
@@ -705,7 +708,8 @@ def draw_polygons(polygons, shape, fill=True, edges=True, vertices=True, line_wi
     if antialiasing:
         # resize images:
         for im_draw in im_draw_list:
-            im_list.append(im_draw[0].resize(shape, Image.BILINEAR))
+            resize_shape = (shape[1], shape[0])
+            im_list.append(im_draw[0].resize(resize_shape, Image.BILINEAR))
     else:
         for im_draw in im_draw_list:
             im_list.append(im_draw[0])
