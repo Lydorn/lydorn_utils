@@ -3,14 +3,17 @@ import time
 import json
 import os.path
 from tqdm import tqdm
+import functools
 
 import rasterio
 from osgeo import gdal, ogr
 from osgeo import osr
 import overpy
-from pyproj import Proj, transform
+from pyproj import Proj, transform, Transformer
 import fiona
+import fiona.crs
 import shapely.geometry
+import shapely.ops
 
 from . import polygon_utils
 from . import math_utils
@@ -321,22 +324,36 @@ def save_shapefile_from_polygons(polygons, image_filepath, output_shapefile_file
     ds = layer = feat = geom = None
 
 
-def save_shapefile_from_shapely_polygons(polygons, output_shapefile_filepath, as_shapefile):
+def save_shapefile_from_shapely_polygons(polygons, image_filepath, output_shapefile_filepath):
     # Define a polygon feature geometry with one attribute
     schema = {
         'geometry': 'Polygon',
         'properties': {'id': 'int'},
     }
+    shp_crs = "EPSG:4326"
+    shp_srs = Proj(shp_crs)
+    raster = rasterio.open(image_filepath)
+    raster_srs = Proj(raster.crs)
+    raster_proj = lambda x, y: raster.transform * (x, y)
+    # shp_proj = functools.partial(transform, raster_srs, shp_srs)
+    shp_proj = Transformer.from_proj(raster_srs, shp_srs).transform
 
     # Write a new Shapefile
-    with fiona.open(as_shapefile, 'r') as source:
-        with fiona.open(output_shapefile_filepath, 'w', driver='ESRI Shapefile', schema=schema, crs=source.meta["crs"]) as c:
-            ## If there are multiple geometries, put the "for" loop here
-            for id, polygon in enumerate(polygons):
-                c.write({
-                    'geometry': shapely.geometry.mapping(polygon),
-                    'properties': {'id': id},
-                })
+    with fiona.open(output_shapefile_filepath, 'w', driver='ESRI Shapefile', schema=schema, crs=fiona.crs.from_epsg(4326)) as c:
+        for id, polygon in enumerate(polygons):
+            # print("---")
+            # print(polygon)
+            raster_polygon = shapely.ops.transform(raster_proj, polygon)
+            # print(raster_polygon)
+            # shp_polygon = shapely.ops.transform(shp_proj, raster_polygon)
+            # print(shp_polygon)
+
+            wkt_polygon = shapely.geometry.mapping(raster_polygon)
+
+            c.write({
+                'geometry': wkt_polygon,
+                'properties': {'id': id},
+            })
 
 
 def indices_of_biggest_intersecting_polygon(polygon_list):
