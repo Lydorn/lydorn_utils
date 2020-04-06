@@ -124,6 +124,13 @@ def get_axis_patch_count(length, stride, patch_res):
 
 
 def compute_patch_boundingboxes(image_size, stride, patch_res):
+    """
+
+    @param image_size:
+    @param stride:
+    @param patch_res:
+    @return: [[row_start, col_start, row_end, col_end], ...]
+    """
     im_rows = image_size[0]
     im_cols = image_size[1]
 
