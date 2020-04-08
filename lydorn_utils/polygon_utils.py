@@ -1,3 +1,4 @@
+from functools import partial
 import math
 import random
 import numpy as np
@@ -12,7 +13,8 @@ if python_utils.module_exists("skimage.measure"):
     from skimage.measure import approximate_polygon
 
 if python_utils.module_exists("shapely"):
-    from shapely import geometry
+    import shapely.geometry
+    import shapely.affinity
 
 
 def is_polygon_clockwise(polygon):
@@ -464,7 +466,8 @@ def crop_polygon_to_patch(polygon, bounding_box):
 
 def crop_polygon_to_patch_if_touch(polygon, bounding_box):
     assert type(polygon) == np.ndarray, "polygon should be a numpy array, not {}".format(type(polygon))
-    assert len(polygon.shape) == 2 and polygon.shape[1] == 2, "polygon should be of shape (N, 2), not {}".format(polygon.shape)
+    assert len(polygon.shape) == 2 and polygon.shape[1] == 2, "polygon should be of shape (N, 2), not {}".format(
+        polygon.shape)
     # Verify that at least one vertex is inside bounding_box
     polygon_touches_patch = np.any(
         np.logical_and(
@@ -502,6 +505,31 @@ def crop_polygons_to_patch(polygons, bounding_box):
         if cropped_polygon is not None:
             cropped_polygons.append(cropped_polygon)
     return cropped_polygons
+
+
+def patch_polygons(polygons, minx, miny, maxx, maxy):
+    """
+    Filters out polygons that do not touch the bbox and translate those that do to the box's coordinate system.
+
+    @param polygons: [shapely.geometry.Polygon, ...]
+    @param maxy:
+    @param maxx:
+    @param miny:
+    @param minx:
+    @return: [shapely.geometry.Polygon, ...]
+    """
+    assert type(polygons) == list, "polygons should be a list"
+    if len(polygons) == 0:
+        return polygons
+    assert type(polygons[0]) == shapely.geometry.Polygon, \
+        f"Items of the polygons list should be of type shapely.geometry.Polygon, not {type(polygons[0])}"
+
+    box_polygon = shapely.geometry.box(minx, miny, maxx, maxy)
+    polygons = filter(box_polygon.intersects, polygons)
+
+    polygons = map(partial(shapely.affinity.translate, xoff=-minx, yoff=-miny), polygons)
+
+    return list(polygons)
 
 
 def polygon_remove_holes(polygon):
@@ -702,7 +730,7 @@ def draw_polygons(polygons, shape, fill=True, edges=True, vertices=True, line_wi
         if vertices:
             draw = im_draw_list[vertices_channel_index][1]
             for vertex in vertex_list:
-                _draw_circle(draw, vertex, line_width/2, fill=255)
+                _draw_circle(draw, vertex, line_width / 2, fill=255)
 
     im_list = []
     if antialiasing:
@@ -918,7 +946,7 @@ def compute_angle_three_points(point_source, point_target1, point_target2):
     dist_source_target2 = math.sqrt(squared_dist_source_target2)
     try:
         cos = (squared_dist_source_target1 + squared_dist_source_target2 - squared_dist_target1_target2) / (
-                    2 * dist_source_target1 * dist_source_target2)
+                2 * dist_source_target1 * dist_source_target2)
     except ZeroDivisionError:
         return float('inf')
     cos = max(min(cos, 1),
@@ -1287,8 +1315,7 @@ def init_angle_field(polygons, shape, line_width=1):
     array = np.array(im)
     return array
 
-
-if __name__ == "__main__":
+def main():
     # polygon = np.array([
     #     [0, 0],
     #     [1, 0],
@@ -1352,3 +1379,7 @@ if __name__ == "__main__":
     seg = draw_polygons(polygons, shape, fill=True, edges=True, vertices=True, line_width=3, antialiasing=True)
     print("seg:")
     print(seg[..., 1])
+
+
+if __name__ == "__main__":
+    main()
