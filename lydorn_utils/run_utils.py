@@ -640,7 +640,7 @@ def wipe_run_subdirs(run_dir, logs_dirname="logs", checkpoints_dirname="checkpoi
 
 
 def save_config(config, config_dirpath):
-    filepath = os.path.join(config_dirpath, 'config.defaults.json')
+    filepath = os.path.join(config_dirpath, 'config.json')
     with open(filepath, 'w') as outfile:
         json.dump(config, outfile)
     # shutil.copyfile(os.path.join(project_dir, "config.py"), os.path.join(current_logs_dir, "config.py"))
