@@ -5,6 +5,7 @@ import os
 import errno
 import json
 from jsmin import jsmin
+from lydorn_utils import print_utils
 
 
 def module_exists(module_name):
@@ -68,13 +69,16 @@ def save_json(filepath, data):
 
 
 def load_json(filepath):
+    if not os.path.exists(filepath):
+        return False
     try:
         with open(filepath, 'r') as f:
             minified = jsmin(f.read())
             data = json.loads(minified)
-        return data
-    except FileNotFoundError:
-        return False
+    except json.decoder.JSONDecodeError as e:
+        print_utils.print_error(f"ERROR in load_json(filepath): {e} from JSON at {filepath}")
+        exit()
+    return data
 
 
 def wipe_dir(dirpath):

@@ -640,7 +640,7 @@ def wipe_run_subdirs(run_dir, logs_dirname="logs", checkpoints_dirname="checkpoi
 
 
 def save_config(config, config_dirpath):
-    filepath = os.path.join(config_dirpath, 'config.json')
+    filepath = os.path.join(config_dirpath, 'config.defaults.json')
     with open(filepath, 'w') as outfile:
         json.dump(config, outfile)
     # shutil.copyfile(os.path.join(project_dir, "config.py"), os.path.join(current_logs_dir, "config.py"))
@@ -671,10 +671,95 @@ def load_config(config_name="config", config_dirpath="", try_default=False):
             return None
         elif try_default:
             print_utils.print_warning(
-                "WARNING: config file {} was not found, opening default config file config.json instead.".format(
+                "WARNING: config file {} was not found, opening default config file config.defaults.json instead.".format(
                     config_filepath))
             return load_config()
         else:
             print_utils.print_warning(
                 "WARNING: config file {} was not found.".format(config_filepath))
             return None
+
+
+def _merge_dictionaries(dict1, dict2):
+    """
+    Recursive merge dictionaries.
+
+    :param dict1: Base dictionary to merge.
+    :param dict2: Dictionary to merge on top of base dictionary.
+    :return: Merged dictionary
+    """
+    for key, val in dict1.items():
+        if isinstance(val, dict):
+            dict2_node = dict2.setdefault(key, {})
+            _merge_dictionaries(val, dict2_node)
+        else:
+            if key not in dict2:
+                dict2[key] = val
+
+    return dict2
+
+
+def load_defaults_in_config(config: dict, filepath_key: str="defaults_filepath") -> dict:
+    """
+    Searches in the config dict for keys equal to "defaults_filepath".
+    When one is found, read the json at the defaults_filepath and add the defaults for the current params.
+
+    Example:
+    config = {
+        "some_params": {
+            filepath_key: "path/to/default_params.json",
+            "param_2": {
+                "sub_param_1": 0,
+                "sub_param_2": 0,
+            }
+        }
+    }
+    and there is a file at path/to/default_params.json which reads:
+    {
+        "param_1": 0,
+        "param_2": {
+            "sub_param_2": 1,
+        }
+    }
+
+    The returned config dict will be:
+    {
+        "some_params": {
+            "param_1": 0,
+            "param_2": {
+                "sub_param_1": 0,
+                "sub_param_2": 1,
+            }
+        }
+    }
+    Note the value of param_2.sub_param_2 whose default was overwritten while param_2.sub_param_1 was left to default
+
+    @param config:
+    @param filepath_key:
+    @return: config with all defaults loaded
+    """
+    assert isinstance(config, dict), f"config should be of type dict, not {type(config)}"
+
+    if filepath_key in config and isinstance(config[filepath_key], str):
+        defaults = python_utils.load_json(config[filepath_key])
+        if defaults:
+            print_utils.print_info(f"INFO: Loading defaults from {config[filepath_key]}")
+            # Recursively process defaults
+            defaults = load_defaults_in_config(defaults, filepath_key=filepath_key)
+            # Copy defaults in config if the key is not already there
+            config = _merge_dictionaries(defaults, config)
+            # for default_name, default_value in defaults.items():
+            #     if default_name not in config:
+            #         config[default_name] = default_value
+            # Delete filepath_key key
+            del config[filepath_key]
+        else:
+            print_utils.print_error(f"ERROR: Could not load defaults from {config[filepath_key]}!")
+            raise ValueError
+
+    # Check items of all other keys
+    for key, item in config.items():
+        if type(item) == dict:
+            config[key] = load_defaults_in_config(item, filepath_key=filepath_key)
+
+    return config
