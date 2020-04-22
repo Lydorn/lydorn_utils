@@ -1,3 +1,4 @@
+import sys
 from functools import partial
 import math
 import random
@@ -6,8 +7,10 @@ import scipy.spatial
 from PIL import Image, ImageDraw, ImageFilter
 import skimage.draw
 import skimage
+from descartes import PolygonPatch
+from matplotlib.collections import PatchCollection
 
-from . import python_utils
+from lydorn_utils import python_utils
 
 if python_utils.module_exists("skimage.measure"):
     from skimage.measure import approximate_polygon
@@ -15,6 +18,7 @@ if python_utils.module_exists("skimage.measure"):
 if python_utils.module_exists("shapely"):
     import shapely.geometry
     import shapely.affinity
+    import shapely.ops
 
 
 def is_polygon_clockwise(polygon):
@@ -101,8 +105,8 @@ def intersect_polygons(simple_polygon, multi_polygon):
     :param target_polygon:
     :return: List of a simple polygon: [poly1, poly2,...] with a multi polygon: [[(x1, y1), (x2, y2), ...], [...]]
     """
-    poly1 = geometry.Polygon(simple_polygon).buffer(0)
-    poly2 = geometry.MultiPolygon(geometry.Polygon(polygon) for polygon in multi_polygon).buffer(0)
+    poly1 = shapely.geometry.Polygon(simple_polygon).buffer(0)
+    poly2 = shapely.geometry.MultiPolygon(shapely.geometry.Polygon(polygon) for polygon in multi_polygon).buffer(0)
     intersection_poly = poly1.intersection(poly2)
     if 0 < intersection_poly.area:
         if intersection_poly.type == 'Polygon':
@@ -118,8 +122,8 @@ def intersect_polygons(simple_polygon, multi_polygon):
 
 
 def check_intersection_with_polygon(input_polygon, target_polygon):
-    poly1 = geometry.Polygon(input_polygon).buffer(0)
-    poly2 = geometry.Polygon(target_polygon).buffer(0)
+    poly1 = shapely.geometry.Polygon(input_polygon).buffer(0)
+    poly2 = shapely.geometry.Polygon(target_polygon).buffer(0)
     intersection_poly = poly1.intersection(poly2)
     intersection_area = intersection_poly.area
     is_intersection = 0 < intersection_area
@@ -140,20 +144,20 @@ def check_intersection_with_polygons(input_polygon, target_polygons):
 
 
 def polygon_area(polygon):
-    poly = geometry.Polygon(polygon).buffer(0)
+    poly = shapely.geometry.Polygon(polygon).buffer(0)
     return poly.area
 
 
 def polygon_union(polygon1, polygon2):
-    poly1 = geometry.Polygon(polygon1).buffer(0)
-    poly2 = geometry.Polygon(polygon2).buffer(0)
+    poly1 = shapely.geometry.Polygon(polygon1).buffer(0)
+    poly2 = shapely.geometry.Polygon(polygon2).buffer(0)
     union_poly = poly1.union(poly2)
     return np.array(union_poly.exterior.coords)
 
 
 def polygon_iou(polygon1, polygon2):
-    poly1 = geometry.Polygon(polygon1).buffer(0)
-    poly2 = geometry.Polygon(polygon2).buffer(0)
+    poly1 = shapely.geometry.Polygon(polygon1).buffer(0)
+    poly2 = shapely.geometry.Polygon(polygon2).buffer(0)
     intersection_poly = poly1.intersection(poly2)
     union_poly = poly1.union(poly2)
     intersection_area = intersection_poly.area
@@ -1315,70 +1319,254 @@ def init_angle_field(polygons, shape, line_width=1):
     array = np.array(im)
     return array
 
+
+def plot_geometries(axis, geometries, polygon_probs=None, draw_vertices=True, linewidths=1, markersize=3):
+    if len(geometries):
+        patches = []
+        for i, geometry in enumerate(geometries):
+            polygon = shapely.geometry.Polygon(geometry)
+            if not polygon.is_empty:
+                patch = PolygonPatch(polygon)
+                patches.append(patch)
+        random.seed(1)
+        colors = random.choices([
+            [0, 0, 1, 1],
+            [0, 1, 0, 1],
+            [1, 0, 0, 1],
+            [1, 1, 0, 1],
+            [1, 0, 1, 1],
+            [0, 1, 1, 1],
+            [0.5, 1, 0, 1],
+            [1, 0.5, 0, 1],
+            [0.5, 0, 1, 1],
+            [1, 0, 0.5, 1],
+            [0, 0.5, 1, 1],
+            [0, 1, 0.5, 1],
+        ], k=len(patches))
+        edgecolors = np.array(colors)
+        facecolors = edgecolors.copy()
+        if polygon_probs is not None:
+            facecolors[:, -1] = 0.2 * np.array(polygon_probs) + 0.1
+        else:
+            facecolors[:, -1] = 0.2
+        p = PatchCollection(patches, facecolors=facecolors, edgecolors=edgecolors, linewidths=linewidths)
+        axis.add_collection(p)
+
+        if draw_vertices:
+            for i, polygon in enumerate(geometries):
+                axis.plot(*polygon.exterior.xy, marker="o", color=edgecolors[i], markersize=markersize)
+                for interior in polygon.interiors:
+                    axis.plot(*interior.xy, marker="o", color=edgecolors[i], markersize=markersize)
+
+
+def sample_geometry(geom, density):
+    """
+    Sample edges of geom with a homogeneous density.
+
+    @param geom:
+    @param density:
+    @return:
+    """
+    if isinstance(geom, shapely.geometry.GeometryCollection):
+        sampled_geom = shapely.geometry.GeometryCollection([sample_geometry(g, density) for g in geom])
+    elif isinstance(geom, shapely.geometry.Polygon):
+        sampled_exterior = sample_geometry(geom.exterior, density)
+        sampled_interiors = [sample_geometry(interior, density) for interior in geom.interiors]
+        sampled_geom = shapely.geometry.Polygon(sampled_exterior, sampled_interiors)
+    elif isinstance(geom, shapely.geometry.LineString):
+        sampled_x = np.empty(0)
+        sampled_y = np.empty(0)
+        coords = np.array(geom.coords)
+        lengths = np.linalg.norm(coords[:-1] - coords[1:], axis=1)
+        for i in range(len(lengths)):
+            start = geom.coords[i]
+            end = geom.coords[i + 1]
+            length = lengths[i]
+            num = int(round(length / density))
+            x_seq = np.linspace(start[0], end[0], num + 1)
+            y_seq = np.linspace(start[1], end[1], num + 1)
+            if 0 < i:
+                x_seq = x_seq[1:]
+                y_seq = y_seq[1:]
+            sampled_x = np.append(sampled_x, x_seq)
+            sampled_y = np.append(sampled_y, y_seq)
+        sampled_coords = zip(sampled_x, sampled_y)
+        sampled_geom = shapely.geometry.LineString(sampled_coords)
+    else:
+        raise TypeError(f"geom of type {type(geom)} not supported!")
+    return sampled_geom
+
+
+def project_onto_geometry(geom, target):
+    """
+    Projects all points from line_string onto target.
+    @param geom:
+    @param target:
+    @return:
+    """
+    if isinstance(geom, shapely.geometry.GeometryCollection):
+        projected_geom = shapely.geometry.GeometryCollection([project_onto_geometry(g, target) for g in geom])
+    elif isinstance(geom, shapely.geometry.Polygon):
+        projected_exterior = project_onto_geometry(geom.exterior, target)
+        projected_interiors = [project_onto_geometry(interior, target) for interior in geom.interiors]
+        projected_geom = shapely.geometry.Polygon(projected_exterior, projected_interiors)
+    elif isinstance(geom, shapely.geometry.LineString):
+        projected_coords = []
+        for coord in geom.coords:
+            point = shapely.geometry.Point(coord)
+            _, projected_point = shapely.ops.nearest_points(point, target)
+            dist = point.distance(projected_point)
+            projected_coords.append(projected_point.coords[0])
+        projected_geom = shapely.geometry.LineString(projected_coords)
+    else:
+        raise TypeError(f"geom of type {type(geom)} not supported!")
+    return projected_geom
+
+
+def compute_vertex_wise_distance(geom1, geom2, tolerance, max_stretch, dist="cosine"):
+    """
+
+    @param geom1:
+    @param geom2:
+    @param tolerance: Points between geom1 and geom2 that are farther away than tolerance
+    @param max_stretch: Edges of geom2 than are longer than those of geom1 with a factor greater than max_stretch are ignored
+    @param dist:
+    @return:
+    """
+    assert type(geom1) == type(geom2), f"geom1 and geom2 must be of the same type, not {type(geom1)} and {type(geom2)}"
+    if isinstance(geom1, shapely.geometry.GeometryCollection):
+        distances = [compute_vertex_wise_distance(_geom1, _geom2, tolerance, max_stretch, dist=dist) for _geom1, _geom2 in zip(geom1, geom2)]
+        distances = np.concatenate(distances)
+    elif isinstance(geom1, shapely.geometry.Polygon):
+        distances_exterior = compute_vertex_wise_distance(geom1.exterior, geom2.exterior, tolerance, max_stretch, dist=dist)
+        distances_interiors = [compute_vertex_wise_distance(interior1, interior2, tolerance, max_stretch, dist=dist) for interior1, interior2 in zip(geom1.interiors, geom2.interiors)]
+        distances = [distances_exterior, *distances_interiors]
+        distances = np.concatenate(distances)
+    elif isinstance(geom1, shapely.geometry.LineString):
+        assert len(geom1.coords) == len(geom2.coords), "geom1 and geom2 must have the same length"
+        points1 = np.array(geom1.coords)
+        points2 = np.array(geom2.coords)
+        # Mark points that are farther away than tolerance between points1 and points2 to remove then from further computation
+        dist_1_2 = np.linalg.norm(points1 - points2, axis=1)
+        tolerance_valid_point_mask = dist_1_2 < tolerance
+        if dist == "cosine":
+            edges1 = points1[1:] - points1[:-1]
+            edges2 = points2[1:] - points2[:-1]
+            # Remove edges with at least one point with tolerance < dist_1_2
+            tolerance_valid_edge_mask = np.logical_and(tolerance_valid_point_mask[1:], tolerance_valid_point_mask[:-1])
+            edges1 = edges1[tolerance_valid_edge_mask]
+            edges2 = edges2[tolerance_valid_edge_mask]
+            # Remove edges with a norm of zero
+            norm1 = np.linalg.norm(edges1, axis=1)
+            norm2 = np.linalg.norm(edges2, axis=1)
+            norm_valid_mask = 0 < norm1 * norm2
+            edges1 = edges1[norm_valid_mask]
+            edges2 = edges2[norm_valid_mask]
+            norm1 = norm1[norm_valid_mask]
+            norm2 = norm2[norm_valid_mask]
+            # Remove edges that have been stretched more than max_stretch
+            stretch = norm2 / norm1
+            stretch_valid_mask = stretch < max_stretch
+            edges1 = edges1[stretch_valid_mask]
+            edges2 = edges2[stretch_valid_mask]
+            norm1 = norm1[stretch_valid_mask]
+            norm2 = norm2[stretch_valid_mask]
+            # Compute
+            distances = 1 - np.sum(np.multiply(edges1, edges2), axis=1) / (norm1 * norm2)
+        else:
+            raise NotImplemented(f"Dist '{dist}' is not implemented")
+    else:
+        raise TypeError(f"geom of type {type(geom1)} not supported!")
+    return distances
+
+
+def compute_polygon_contour_distances(pred_polygons: list, gt_polygons: list, sample_density: float, tolerance: float, max_stretch: float, dist="cosine"):
+    """
+    pred_polygons are sampled with sample_density before projecting those sampled points to gt_polygons.
+    Then the
+
+    @param pred_polygons:
+    @param gt_polygons:
+    @param sample_density:
+    @param tolerance:  When projecting points, record projected distances greater than tolerance to then exclude those points from further computations
+    @param max_stretch:  Exclude edges that have been stretched by the projection more than max_stretch from further computation
+    @param dist: Distance type, can be "cosine" or ...
+    @return:
+    """
+    assert isinstance(pred_polygons, list), "pred_polygons should be a list"
+    assert isinstance(gt_polygons, list), "gt_polygons should be a list"
+    assert isinstance(pred_polygons[0], shapely.geometry.Polygon), \
+        f"Items of pred_polygons should be of type shapely.geometry.Polygon, not {type(pred_polygons[0])}"
+    assert isinstance(gt_polygons[0], shapely.geometry.Polygon), \
+        f"Items of gt_polygons should be of type shapely.geometry.Polygon, not {type(gt_polygons[0])}"
+    gt_polygons = shapely.geometry.collection.GeometryCollection(gt_polygons)
+    pred_polygons = shapely.geometry.collection.GeometryCollection(pred_polygons)
+    # Sample pred_polygons with a homogeneous density of sample_density
+    sampled_pred_polygons = sample_geometry(pred_polygons, sample_density)
+    # Project sampled polygon points to ground truth contours
+    gt_contours = shapely.geometry.collection.GeometryCollection([contour for polygon in gt_polygons for contour in [polygon.exterior, *polygon.interiors]])
+    projected_pred_polygons = project_onto_geometry(sampled_pred_polygons, gt_contours)
+    # Compare tangents between original pred and projected pred
+    distances = compute_vertex_wise_distance(sampled_pred_polygons, projected_pred_polygons, tolerance, max_stretch, dist=dist)
+
+    return distances, sampled_pred_polygons, projected_pred_polygons
+
+
 def main():
-    # polygon = np.array([
-    #     [0, 0],
-    #     [1, 0],
-    #     [1, 1],
-    #     [np.nan, np.nan],
-    #     [0, 0],
-    #     [1, 0],
-    #     [1, 1],
-    #     [np.nan, np.nan],
-    # ], dtype=np.float32)
-    # polygons = [
-    #     polygon.copy(),
-    #     polygon.copy(),
-    #     polygon.copy(),
-    #     polygon.copy() + 100,
-    # ]
-    #
-    # bounding_box = [10, 10, 100, 100]  # Top left corner x, y, bottom right corner x, y
-    #
-    # cropped_polygons = crop_polygons_to_patch(polygons, bounding_box)
-    # print(cropped_polygons)
+    import matplotlib.pyplot as plt
 
-    # # --- Check angle functions --- #
-    # edge1 = np.array([
-    #     [0, 0],
-    #     [1, 0],
+    gt_polygon_1 = shapely.geometry.Polygon(
+        [
+            [0, 0],
+            [10, 0],
+            [10, 10],
+            [0, 10]
+        ],
+        # [[
+        #     [0.1, 0.1],
+        #     [0.9, 0.1],
+        #     [0.9, 0.9],
+        #     [0.1, 0.9]
+        # ]]
+    )
+    # gt_polygon_2 = shapely.geometry.Polygon([
+    #     [2, 2],
+    #     [5, 0],
+    #     [5, 6],
+    #     [0, 4]
     # ])
-    # edge2 = np.array([
-    #     [1, 0],
-    #     [2, 0],
-    # ])
-    # edge_radius = 0.1
-    # edges_overlapping = are_edges_overlapping(edge1, edge2, edge_radius)
-    # print("edges_overlapping:")
-    # print(edges_overlapping)
+    pred_polygon_1 = shapely.geometry.Polygon(
+        [
+            [0, 0],
+            [10, 0],
+            [20, 20],
+            [0, 10]
+        ],
+        # [[
+        #     [0.1, 0.1],
+        #     [0.9, 0.1],
+        #     [0.9, 0.9],
+        #     [0.1, 0.9]
+        # ]]
+    )
+    pred_polygons = [pred_polygon_1]
+    gt_polygons = [gt_polygon_1]
 
-    # # --- clean_degenerate_face_edges --- #
-    # face_vertices = [215, 238, 220, 201, 193, 194, 195, 199, 213, 219, 235, 238, 215]
-    # # face_vertices = [1, 2, 3, 4, 5, 4, 3, 6, 1]
-    # print(face_vertices)
-    # cleaned_face_vertices = clean_degenerate_face_edges(face_vertices)
-    # print(cleaned_face_vertices)
+    normal_cosine_distances, sampled_pred_polygons, projected_pred_polygons = compute_polygon_contour_distances(pred_polygons, gt_polygons, sample_density=0.5, tolerance=5, max_stretch=2)
 
-    # --- init_cross_field()
-    polygon = np.array([
-        [0, 0],
-        [1.5, 0.5],
-        [1, 1],
-        [0, 1],
-    ]) * 50 + 50
-    polygons = [polygon]
-    shape = (150, 150)
+    fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(8, 4), sharex=True, sharey=True)
+    ax = axes.ravel()
 
-    angle_field = init_angle_field(polygons, shape, line_width=5)
+    plot_geometries(ax[0], gt_polygons)
+    plot_geometries(ax[1], sampled_pred_polygons)
+    plot_geometries(ax[2], projected_pred_polygons)
+    print(normal_cosine_distances)
+    print(np.min(normal_cosine_distances))
+    print(np.mean(normal_cosine_distances))
+    print(np.max(normal_cosine_distances))
 
-    print("angle_field:")
-    print(angle_field.shape)
-    print(angle_field)
-
-    # --- draw polygons
-    seg = draw_polygons(polygons, shape, fill=True, edges=True, vertices=True, line_width=3, antialiasing=True)
-    print("seg:")
-    print(seg[..., 1])
+    fig.tight_layout()
+    plt.show()
 
 
 if __name__ == "__main__":
