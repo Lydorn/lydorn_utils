@@ -240,6 +240,8 @@ def create_ogr_polygons(polygons, transform_mat):
 def save_image_as_geotiff(save_filepath, image, source_geotiff_filepath):
     # Get geo info from source image:
     source_ds = gdal.Open(source_geotiff_filepath)
+    if source_ds is None:
+        raise FileNotFoundError(f"Could not load source file {source_geotiff_filepath}")
     source_gt = source_ds.GetGeoTransform()
     source_prj = source_ds.GetProjection()
 
