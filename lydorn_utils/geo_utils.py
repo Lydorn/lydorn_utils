@@ -151,7 +151,7 @@ def apply_transform_mat(polygon_epsg_space, transform_mat):
     return polygon_image_space
 
 
-def get_polygons_from_osm(image_filepath, tag=""):
+def get_polygons_from_osm(image_filepath, tag="", ij_coords=True):
     coor, gt, coor_system = get_coor_in_space(image_filepath)
     transform_mat = compute_epsg_to_image_mat(coor, gt)
     osm_data = get_osm_data(coor[1])
@@ -159,11 +159,11 @@ def get_polygons_from_osm(image_filepath, tag=""):
     polygons = []
     for way in osm_data.ways:
         if way.tags.get(tag, "n/a") != 'n/a':
-            # polygon = way.nodes[:-1]  # Start and end vertex are the same so remove the end vertex
             polygon = way.nodes
             polygon_epsg_space = proj_to_epsg_space(polygon, coor_system)
             polygon_image_space = apply_transform_mat(polygon_epsg_space, transform_mat)
-            polygon_image_space = polygon_utils.swap_coords(polygon_image_space)
+            if ij_coords:
+                polygon_image_space = polygon_utils.swap_coords(polygon_image_space)
             polygons.append(polygon_image_space)
 
     return polygons
