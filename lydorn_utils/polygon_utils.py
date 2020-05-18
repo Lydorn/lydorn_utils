@@ -1,4 +1,5 @@
 import sys
+import time
 from functools import partial
 import math
 import random
@@ -9,6 +10,7 @@ import skimage.draw
 import skimage
 from descartes import PolygonPatch
 from matplotlib.collections import PatchCollection
+from multiprocess import Pool
 
 from lydorn_utils import python_utils
 
@@ -19,6 +21,8 @@ if python_utils.module_exists("shapely"):
     import shapely.geometry
     import shapely.affinity
     import shapely.ops
+    import shapely.prepared
+    import shapely.validation
 
 
 def is_polygon_clockwise(polygon):
@@ -1320,14 +1324,22 @@ def init_angle_field(polygons, shape, line_width=1):
     return array
 
 
-def plot_geometries(axis, geometries, polygon_probs=None, draw_vertices=True, linewidths=1, markersize=3):
+def plot_geometries(axis, geometries, linewidths=1, markersize=3):
     if len(geometries):
         patches = []
         for i, geometry in enumerate(geometries):
-            polygon = shapely.geometry.Polygon(geometry)
-            if not polygon.is_empty:
-                patch = PolygonPatch(polygon)
-                patches.append(patch)
+            if geometry.geom_type == "Polygon":
+                polygon = shapely.geometry.Polygon(geometry)
+                if not polygon.is_empty:
+                    patch = PolygonPatch(polygon)
+                    patches.append(patch)
+                axis.plot(*polygon.exterior.xy, marker="o", markersize=markersize)
+                for interior in polygon.interiors:
+                    axis.plot(*interior.xy, marker="o", markersize=markersize)
+            elif geometry.geom_type == "LineString" or geometry.geom_type == "LinearRing":
+                axis.plot(*geometry.xy, marker="o", markersize=markersize)
+            else:
+                raise NotImplementedError(f"Geom type {geometry.geom_type} not recognized.")
         random.seed(1)
         colors = random.choices([
             [0, 0, 1, 1],
@@ -1345,18 +1357,8 @@ def plot_geometries(axis, geometries, polygon_probs=None, draw_vertices=True, li
         ], k=len(patches))
         edgecolors = np.array(colors)
         facecolors = edgecolors.copy()
-        if polygon_probs is not None:
-            facecolors[:, -1] = 0.2 * np.array(polygon_probs) + 0.1
-        else:
-            facecolors[:, -1] = 0.2
         p = PatchCollection(patches, facecolors=facecolors, edgecolors=edgecolors, linewidths=linewidths)
         axis.add_collection(p)
-
-        if draw_vertices:
-            for i, polygon in enumerate(geometries):
-                axis.plot(*polygon.exterior.xy, marker="o", color=edgecolors[i], markersize=markersize)
-                for interior in polygon.interiors:
-                    axis.plot(*interior.xy, marker="o", color=edgecolors[i], markersize=markersize)
 
 
 def sample_geometry(geom, density):
@@ -1368,148 +1370,372 @@ def sample_geometry(geom, density):
     @return:
     """
     if isinstance(geom, shapely.geometry.GeometryCollection):
+        # tic = time.time()
+
         sampled_geom = shapely.geometry.GeometryCollection([sample_geometry(g, density) for g in geom])
+
+        # toc = time.time()
+        # print(f"sample_geometry: {toc - tic}s")
     elif isinstance(geom, shapely.geometry.Polygon):
         sampled_exterior = sample_geometry(geom.exterior, density)
         sampled_interiors = [sample_geometry(interior, density) for interior in geom.interiors]
         sampled_geom = shapely.geometry.Polygon(sampled_exterior, sampled_interiors)
     elif isinstance(geom, shapely.geometry.LineString):
-        sampled_x = np.empty(0)
-        sampled_y = np.empty(0)
-        coords = np.array(geom.coords)
+        sampled_x = []
+        sampled_y = []
+        coords = np.array(geom.coords[:])
         lengths = np.linalg.norm(coords[:-1] - coords[1:], axis=1)
         for i in range(len(lengths)):
             start = geom.coords[i]
             end = geom.coords[i + 1]
             length = lengths[i]
-            num = int(round(length / density))
-            x_seq = np.linspace(start[0], end[0], num + 1)
-            y_seq = np.linspace(start[1], end[1], num + 1)
+            num = max(1, int(round(length / density))) + 1
+            x_seq = np.linspace(start[0], end[0], num)
+            y_seq = np.linspace(start[1], end[1], num)
             if 0 < i:
                 x_seq = x_seq[1:]
                 y_seq = y_seq[1:]
-            sampled_x = np.append(sampled_x, x_seq)
-            sampled_y = np.append(sampled_y, y_seq)
+            sampled_x.append(x_seq)
+            sampled_y.append(y_seq)
+        sampled_x = np.concatenate(sampled_x)
+        sampled_y = np.concatenate(sampled_y)
         sampled_coords = zip(sampled_x, sampled_y)
         sampled_geom = shapely.geometry.LineString(sampled_coords)
     else:
         raise TypeError(f"geom of type {type(geom)} not supported!")
     return sampled_geom
 
+#
+# def sample_half_tangent_endpoints(geom, length=0.1):
+#     """
+#     Add 2 vertices per edge, very close to the edge's endpoints. They represent both half-tangent endpoints
+#     @param geom:
+#     @param length:
+#     @return:
+#     """
+#     if isinstance(geom, shapely.geometry.GeometryCollection):
+#         sampled_geom = shapely.geometry.GeometryCollection([sample_half_tangent_endpoints(g, length) for g in geom])
+#     elif isinstance(geom, shapely.geometry.Polygon):
+#         sampled_exterior = sample_half_tangent_endpoints(geom.exterior, length)
+#         sampled_interiors = [sample_half_tangent_endpoints(interior, length) for interior in geom.interiors]
+#         sampled_geom = shapely.geometry.Polygon(sampled_exterior, sampled_interiors)
+#     elif isinstance(geom, shapely.geometry.LineString):
+#         coords = np.array(geom.coords[:])
+#         edge_vecs = coords[1:] - coords[:-1]
+#         norms = np.linalg.norm(edge_vecs, axis=1)
+#         edge_dirs = edge_vecs / norms[:, None]
+#         sampled_coords = [coords[0]]  # Init with first vertex
+#         for edge_i in range(edge_dirs.shape[0]):
+#             first_half_tangent_endpoint = coords[edge_i] + length * edge_dirs[edge_i]
+#             sampled_coords.append(first_half_tangent_endpoint)
+#             second_half_tangent_endpoint = coords[edge_i + 1] - length * edge_dirs[edge_i]
+#             sampled_coords.append(second_half_tangent_endpoint)
+#             sampled_coords.append(coords[edge_i + 1])  # Next vertex
+#         sampled_geom = shapely.geometry.LineString(sampled_coords)
+#     else:
+#         raise TypeError(f"geom of type {type(geom)} not supported!")
+#     return sampled_geom
 
-def project_onto_geometry(geom, target):
+
+def point_project_onto_geometry(coord, target):
+    point = shapely.geometry.Point(coord)
+    _, projected_point = shapely.ops.nearest_points(point, target)
+    # dist = point.distance(projected_point)
+    return projected_point.coords[0]
+
+
+def project_onto_geometry(geom, target, pool: Pool=None):
     """
     Projects all points from line_string onto target.
     @param geom:
     @param target:
+    @param pool:
     @return:
     """
     if isinstance(geom, shapely.geometry.GeometryCollection):
-        projected_geom = shapely.geometry.GeometryCollection([project_onto_geometry(g, target) for g in geom])
+        # tic = time.time()
+
+        if pool is None:
+            projected_geom = [project_onto_geometry(g, target, pool=pool) for g in geom]
+        else:
+            partial_project_onto_geometry = partial(project_onto_geometry, target=target)
+            projected_geom = pool.map(partial_project_onto_geometry, geom)
+        projected_geom = shapely.geometry.GeometryCollection(projected_geom)
+
+        # toc = time.time()
+        # print(f"project_onto_geometry: {toc - tic}s")
     elif isinstance(geom, shapely.geometry.Polygon):
         projected_exterior = project_onto_geometry(geom.exterior, target)
         projected_interiors = [project_onto_geometry(interior, target) for interior in geom.interiors]
-        projected_geom = shapely.geometry.Polygon(projected_exterior, projected_interiors)
+        try:
+            projected_geom = shapely.geometry.Polygon(projected_exterior, projected_interiors)
+        except shapely.errors.TopologicalError as e:
+            import matplotlib.pyplot as plt
+            fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(8, 4), sharex=True, sharey=True)
+            ax = axes.ravel()
+            plot_geometries(ax[0], [geom])
+            plot_geometries(ax[1], target)
+            plot_geometries(ax[2], [projected_exterior, *projected_interiors])
+            fig.tight_layout()
+            plt.show()
+            raise e
     elif isinstance(geom, shapely.geometry.LineString):
-        projected_coords = []
-        for coord in geom.coords:
-            point = shapely.geometry.Point(coord)
-            _, projected_point = shapely.ops.nearest_points(point, target)
-            dist = point.distance(projected_point)
-            projected_coords.append(projected_point.coords[0])
+        projected_coords = [point_project_onto_geometry(coord, target) for coord in geom.coords]
         projected_geom = shapely.geometry.LineString(projected_coords)
     else:
         raise TypeError(f"geom of type {type(geom)} not supported!")
     return projected_geom
 
+#
+# def compute_edge_measures(geom1, geom2, max_stretch, metric_name="cosine"):
+#     """
+#
+#     @param geom1:
+#     @param geom2:
+#     @param max_stretch: Edges of geom2 than are longer than those of geom1 with a factor greater than max_stretch are ignored
+#     @param metric_name:
+#     @return:
+#     """
+#     assert type(geom1) == type(geom2), f"geom1 and geom2 must be of the same type, not {type(geom1)} and {type(geom2)}"
+#     if isinstance(geom1, shapely.geometry.GeometryCollection):
+#         # tic = time.time()
+#
+#         edge_measures_edge_dists_list = [compute_edge_measures(_geom1, _geom2, max_stretch, metric_name=metric_name) for _geom1, _geom2 in zip(geom1, geom2)]
+#         if len(edge_measures_edge_dists_list):
+#             edge_measures_list, edge_dists_list = zip(*edge_measures_edge_dists_list)
+#             edge_measures = np.concatenate(edge_measures_list)
+#             edge_dists = np.concatenate(edge_dists_list)
+#         else:
+#             edge_measures = np.array([])
+#             edge_dists = np.array([])
+#
+#         # toc = time.time()
+#         # print(f"compute_edge_distance: {toc - tic}s")
+#     # elif isinstance(geom1, shapely.geometry.Polygon):
+#     #     distances_exterior = compute_edge_distance(geom1.exterior, geom2.exterior, tolerance, max_stretch, dist=dist)
+#     #     distances_interiors = [compute_edge_distance(interior1, interior2, tolerance, max_stretch, dist=dist) for interior1, interior2 in zip(geom1.interiors, geom2.interiors)]
+#     #     distances = [distances_exterior, *distances_interiors]
+#     #     distances = np.concatenate(distances)
+#     elif isinstance(geom1, shapely.geometry.LineString):
+#         assert len(geom1.coords) == len(geom2.coords), "geom1 and geom2 must have the same length"
+#         points1 = np.array(geom1.coords)
+#         points2 = np.array(geom2.coords)
+#         # Mark points that are farther away than tolerance between points1 and points2 to remove then from further computation
+#         point_dists = np.linalg.norm(points1 - points2, axis=1)
+#         if metric_name == "cosine":
+#             edges1 = points1[1:] - points1[:-1]
+#             edges2 = points2[1:] - points2[:-1]
+#             edge_dists = (point_dists[1:] + point_dists[:-1]) / 2
+#             # Remove edges with a norm of zero
+#             norm1 = np.linalg.norm(edges1, axis=1)
+#             norm2 = np.linalg.norm(edges2, axis=1)
+#             norm_valid_mask = 0 < norm1 * norm2
+#             edges1 = edges1[norm_valid_mask]
+#             edges2 = edges2[norm_valid_mask]
+#             norm1 = norm1[norm_valid_mask]
+#             norm2 = norm2[norm_valid_mask]
+#             edge_dists = edge_dists[norm_valid_mask]
+#             # Remove edges that have been stretched more than max_stretch
+#             stretch = norm2 / norm1
+#             stretch_valid_mask = np.logical_and(1 / max_stretch < stretch, stretch < max_stretch)
+#             edges1 = edges1[stretch_valid_mask]
+#             edges2 = edges2[stretch_valid_mask]
+#             norm1 = norm1[stretch_valid_mask]
+#             norm2 = norm2[stretch_valid_mask]
+#             edge_dists = edge_dists[stretch_valid_mask]
+#             # Compute
+#             edge_measures = np.sum(np.multiply(edges1, edges2), axis=1) / (norm1 * norm2)
+#         else:
+#             raise NotImplemented(f"Metric '{metric_name}' is not implemented")
+#     else:
+#         raise TypeError(f"geom of type {type(geom1)} not supported!")
+#     return edge_measures, edge_dists
 
-def compute_vertex_wise_distance(geom1, geom2, tolerance, max_stretch, dist="cosine"):
-    """
 
-    @param geom1:
-    @param geom2:
-    @param tolerance: Points between geom1 and geom2 that are farther away than tolerance
-    @param max_stretch: Edges of geom2 than are longer than those of geom1 with a factor greater than max_stretch are ignored
-    @param dist:
-    @return:
-    """
-    assert type(geom1) == type(geom2), f"geom1 and geom2 must be of the same type, not {type(geom1)} and {type(geom2)}"
-    if isinstance(geom1, shapely.geometry.GeometryCollection):
-        distances = [compute_vertex_wise_distance(_geom1, _geom2, tolerance, max_stretch, dist=dist) for _geom1, _geom2 in zip(geom1, geom2)]
-        distances = np.concatenate(distances)
-    elif isinstance(geom1, shapely.geometry.Polygon):
-        distances_exterior = compute_vertex_wise_distance(geom1.exterior, geom2.exterior, tolerance, max_stretch, dist=dist)
-        distances_interiors = [compute_vertex_wise_distance(interior1, interior2, tolerance, max_stretch, dist=dist) for interior1, interior2 in zip(geom1.interiors, geom2.interiors)]
-        distances = [distances_exterior, *distances_interiors]
-        distances = np.concatenate(distances)
-    elif isinstance(geom1, shapely.geometry.LineString):
-        assert len(geom1.coords) == len(geom2.coords), "geom1 and geom2 must have the same length"
-        points1 = np.array(geom1.coords)
-        points2 = np.array(geom2.coords)
-        # Mark points that are farther away than tolerance between points1 and points2 to remove then from further computation
-        dist_1_2 = np.linalg.norm(points1 - points2, axis=1)
-        tolerance_valid_point_mask = dist_1_2 < tolerance
-        if dist == "cosine":
-            edges1 = points1[1:] - points1[:-1]
-            edges2 = points2[1:] - points2[:-1]
-            # Remove edges with at least one point with tolerance < dist_1_2
-            tolerance_valid_edge_mask = np.logical_and(tolerance_valid_point_mask[1:], tolerance_valid_point_mask[:-1])
-            edges1 = edges1[tolerance_valid_edge_mask]
-            edges2 = edges2[tolerance_valid_edge_mask]
-            # Remove edges with a norm of zero
-            norm1 = np.linalg.norm(edges1, axis=1)
-            norm2 = np.linalg.norm(edges2, axis=1)
-            norm_valid_mask = 0 < norm1 * norm2
-            edges1 = edges1[norm_valid_mask]
-            edges2 = edges2[norm_valid_mask]
-            norm1 = norm1[norm_valid_mask]
-            norm2 = norm2[norm_valid_mask]
-            # Remove edges that have been stretched more than max_stretch
-            stretch = norm2 / norm1
-            stretch_valid_mask = stretch < max_stretch
-            edges1 = edges1[stretch_valid_mask]
-            edges2 = edges2[stretch_valid_mask]
-            norm1 = norm1[stretch_valid_mask]
-            norm2 = norm2[stretch_valid_mask]
-            # Compute
-            distances = 1 - np.sum(np.multiply(edges1, edges2), axis=1) / (norm1 * norm2)
-        else:
-            raise NotImplemented(f"Dist '{dist}' is not implemented")
+def compute_contour_measure(pred_polygon, gt_contours, sampling_spacing, max_stretch, metric_name="cosine"):
+    pred_contours = shapely.geometry.GeometryCollection([pred_polygon.exterior, *pred_polygon.interiors])
+    sampled_pred_contours = sample_geometry(pred_contours, sampling_spacing)
+    # Project sampled contour points to ground truth contours
+    projected_pred_contours = project_onto_geometry(sampled_pred_contours, gt_contours)
+    contour_measures = []
+    for contour, proj_contour in zip(sampled_pred_contours, projected_pred_contours):
+        coords = np.array(contour.coords[:])
+        proj_coords = np.array(proj_contour.coords[:])
+        edges = coords[1:] - coords[:-1]
+        proj_edges = proj_coords[1:] - proj_coords[:-1]
+        # Remove edges with a norm of zero
+        edge_norms = np.linalg.norm(edges, axis=1)
+        proj_edge_norms = np.linalg.norm(proj_edges, axis=1)
+        norm_valid_mask = 0 < edge_norms * proj_edge_norms
+        edges = edges[norm_valid_mask]
+        proj_edges = proj_edges[norm_valid_mask]
+        edge_norms = edge_norms[norm_valid_mask]
+        proj_edge_norms = proj_edge_norms[norm_valid_mask]
+        # Remove edge that have stretched more than max_stretch (invalid projection)
+        stretch = edge_norms / proj_edge_norms
+        stretch_valid_mask = np.logical_and(1 / max_stretch < stretch, stretch < max_stretch)
+        edges = edges[stretch_valid_mask]
+        if edges.shape[0] == 0:
+            # Invalid projection for the whole contour, skip it
+            continue
+        proj_edges = proj_edges[stretch_valid_mask]
+        edge_norms = edge_norms[stretch_valid_mask]
+        proj_edge_norms = proj_edge_norms[stretch_valid_mask]
+        scalar_products = np.abs(np.sum(np.multiply(edges, proj_edges), axis=1) / (edge_norms * proj_edge_norms))
+        try:
+            contour_measures.append(scalar_products.min())
+        except ValueError:
+            import matplotlib.pyplot as plt
+            fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(8, 4), sharex=True, sharey=True)
+            ax = axes.ravel()
+            plot_geometries(ax[0], [contour])
+            plot_geometries(ax[1], [proj_contour])
+            plot_geometries(ax[2], gt_contours)
+            fig.tight_layout()
+            plt.show()
+    if len(contour_measures):
+        min_scalar_product = min(contour_measures)
+        measure = np.arccos(min_scalar_product)
+        return measure
     else:
-        raise TypeError(f"geom of type {type(geom1)} not supported!")
-    return distances
+        return None
 
 
-def compute_polygon_contour_distances(pred_polygons: list, gt_polygons: list, sample_density: float, tolerance: float, max_stretch: float, dist="cosine"):
+def compute_polygon_contour_measures(pred_polygons: list, gt_polygons: list, sampling_spacing: float, min_precision: float, max_stretch: float, metric_name: str="cosine"):
     """
-    pred_polygons are sampled with sample_density before projecting those sampled points to gt_polygons.
+    pred_polygons are sampled with sampling_spacing before projecting those sampled points to gt_polygons.
     Then the
 
     @param pred_polygons:
     @param gt_polygons:
-    @param sample_density:
-    @param tolerance:  When projecting points, record projected distances greater than tolerance to then exclude those points from further computations
+    @param sampling_spacing:
+    @param min_precision: Polygons in pred_polygons must have a precision with gt_polygons above min_precision to be included in further computations
     @param max_stretch:  Exclude edges that have been stretched by the projection more than max_stretch from further computation
-    @param dist: Distance type, can be "cosine" or ...
+    @param metric_name: Metric type, can be "cosine" or ...
     @return:
     """
     assert isinstance(pred_polygons, list), "pred_polygons should be a list"
     assert isinstance(gt_polygons, list), "gt_polygons should be a list"
+    if len(pred_polygons) == 0 or len(gt_polygons) == 0:
+        return np.array([]), [], []
     assert isinstance(pred_polygons[0], shapely.geometry.Polygon), \
         f"Items of pred_polygons should be of type shapely.geometry.Polygon, not {type(pred_polygons[0])}"
     assert isinstance(gt_polygons[0], shapely.geometry.Polygon), \
         f"Items of gt_polygons should be of type shapely.geometry.Polygon, not {type(gt_polygons[0])}"
     gt_polygons = shapely.geometry.collection.GeometryCollection(gt_polygons)
     pred_polygons = shapely.geometry.collection.GeometryCollection(pred_polygons)
-    # Sample pred_polygons with a homogeneous density of sample_density
-    sampled_pred_polygons = sample_geometry(pred_polygons, sample_density)
-    # Project sampled polygon points to ground truth contours
+    # Filter pred_polygons to have at least a precision with gt_polygons of min_precision
+    filtered_pred_polygons = [pred_polygon for pred_polygon in pred_polygons if min_precision < pred_polygon.intersection(gt_polygons).area / pred_polygon.area]
+    # Extract contours of gt polygons
     gt_contours = shapely.geometry.collection.GeometryCollection([contour for polygon in gt_polygons for contour in [polygon.exterior, *polygon.interiors]])
-    projected_pred_polygons = project_onto_geometry(sampled_pred_polygons, gt_contours)
-    # Compare tangents between original pred and projected pred
-    distances = compute_vertex_wise_distance(sampled_pred_polygons, projected_pred_polygons, tolerance, max_stretch, dist=dist)
+    # Measure metric for each pred polygon
+    half_tangent_max_angles = [compute_contour_measure(pred_polygon, gt_contours, sampling_spacing=sampling_spacing, max_stretch=max_stretch, metric_name=metric_name)
+                               for pred_polygon in filtered_pred_polygons]
+    return half_tangent_max_angles
 
-    return distances, sampled_pred_polygons, projected_pred_polygons
+
+def fix_polygons(polygons, buffer=0.0):
+    polygons_geom = shapely.ops.unary_union(polygons)  # Fix overlapping polygons
+    polygons_geom = polygons_geom.buffer(buffer)  # Fix self-intersecting polygons and other things
+    fixed_polygons = []
+    if polygons_geom.geom_type == "MultiPolygon":
+        for poly in polygons_geom:
+            fixed_polygons.append(poly)
+    elif polygons_geom.geom_type == "Polygon":
+        fixed_polygons.append(polygons_geom)
+    else:
+        raise TypeError(f"Geom type {polygons_geom.geom_type} not recognized.")
+    return fixed_polygons
+
+
+POINTS = []
+
+#
+# def compute_half_tangent_measure(pred_polygon, gt_contours, step=0.1, metric_name="angle"):
+#     """
+#     For each vertex in pred_polygon, find the closest gt contour and the closest point on that contour. From that point, compute both half-tangents.
+#     measure angle difference between half-tangents of pred and corresponding gt points.
+#     @param pred_polygon:
+#     @param gt_contours:
+#     @param metric_name:
+#     @return:
+#     """
+#     assert isinstance(pred_polygon, shapely.geometry.Polygon), "pred_polygon should be a shapely Polygon"
+#     pred_contours = [pred_polygon.exterior, *pred_polygon.interiors]
+#     tangent_measures_list = []
+#     for pred_contour in pred_contours:
+#         pos_array = np.array(pred_contour.coords[:])
+#         pred_tangents = pos_array[1:] - pos_array[:-1]
+#         gt_tangent_1_list = []
+#         gt_tangent_2_list = []
+#         for i, pos in enumerate(pos_array[:-1]):
+#             pred_point = shapely.geometry.Point(pos)
+#             dist_to_gt = np.inf
+#             closest_gt_contour = None
+#             for gt_contour in gt_contours:
+#                 d = pred_point.distance(gt_contour)
+#                 if d < dist_to_gt:
+#                     dist_to_gt = d
+#                     closest_gt_contour = gt_contour
+#             gt_point_t = closest_gt_contour.project(pred_point)  # References the projection of pred_point onto closest_gt_contour with a 1d referencing coordinate t
+#             # --- Compute tangents of projected point on gt:
+#             gt_point_tangent_1 = closest_gt_contour.interpolate(gt_point_t - step)
+#             POINTS.append(gt_point_tangent_1)
+#             gt_point = closest_gt_contour.interpolate(gt_point_t)
+#             POINTS.append(gt_point)
+#             gt_point_tangent_2 = closest_gt_contour.interpolate(gt_point_t + step)
+#             POINTS.append(gt_point_tangent_2)
+#             gt_pos_tangent_1 = np.array(gt_point_tangent_1.coords[0])
+#             gt_pos_tangent_2 = np.array(gt_point_tangent_2.coords[0])
+#             gt_pos = np.array(gt_point.coords[0])
+#             gt_tangent_1 = gt_pos_tangent_1 - gt_pos
+#             gt_tangent_2 = gt_pos_tangent_2 - gt_pos
+#             gt_tangent_1_list.append(gt_tangent_1)
+#             gt_tangent_2_list.append(gt_tangent_2)
+#         gt_tangents_1 = np.stack(gt_tangent_1_list, axis=0)
+#         gt_tangents_2 = np.stack(gt_tangent_2_list, axis=0)
+#         # Measure dist between pred_tangents and gt_tangents
+#         pred_norms = np.linalg.norm(pred_tangents, axis=1)
+#         tangent_1_measures = np.abs(np.sum(np.multiply(np.roll(pred_tangents, 1, axis=0), gt_tangents_1), axis=1) / (np.roll(pred_norms, 1, axis=0) * step))
+#         tangent_2_measures = np.abs(np.sum(np.multiply(pred_tangents, gt_tangents_2), axis=1) / (pred_norms * step))
+#         print(tangent_1_measures)
+#         print(tangent_2_measures)
+#         tangent_measures_list.append(tangent_1_measures)
+#         tangent_measures_list.append(tangent_2_measures)
+#     tangent_measures = np.concatenate(tangent_measures_list)
+#     min_scalar_product = np.min(tangent_measures)
+#     max_angle = np.arccos(min_scalar_product)
+#     return max_angle
+
+#
+# def compute_vertex_measures(pred_polygons: list, gt_polygons: list, min_precision: float, metric_name: str="angle", pool: Pool=None):
+#     """
+#     Computes measure for each pred_polygon
+#     @param pred_polygons:
+#     @param gt_polygons:
+#     @param min_precision:
+#     @param metric_name:
+#     @param pool:
+#     @return:
+#     """
+#     assert isinstance(pred_polygons, list), "pred_polygons should be a list"
+#     assert isinstance(gt_polygons, list), "gt_polygons should be a list"
+#     if len(pred_polygons) == 0 or len(gt_polygons) == 0:
+#         return np.array([]), [], []
+#     assert isinstance(pred_polygons[0], shapely.geometry.Polygon), \
+#         f"Items of pred_polygons should be of type shapely.geometry.Polygon, not {type(pred_polygons[0])}"
+#     assert isinstance(gt_polygons[0], shapely.geometry.Polygon), \
+#         f"Items of gt_polygons should be of type shapely.geometry.Polygon, not {type(gt_polygons[0])}"
+#     gt_polygons = shapely.geometry.collection.GeometryCollection(gt_polygons)
+#     pred_polygons = shapely.geometry.collection.GeometryCollection(pred_polygons)
+#     # Filter pred_polygons to have at least a precision with gt_polygons of min_precision
+#     filtered_pred_polygons = [pred_polygon for pred_polygon in pred_polygons if min_precision < pred_polygon.intersection(gt_polygons).area / pred_polygon.area]
+#     # Extract contours of gt polygons
+#     gt_contours = shapely.geometry.collection.GeometryCollection([contour for polygon in gt_polygons for contour in [polygon.exterior, *polygon.interiors]])
+#     # Measure metric for each pre polygon
+#     half_tangent_max_angles = [compute_half_tangent_measure(pred_polygon, gt_contours, metric_name=metric_name)
+#                                for pred_polygon in filtered_pred_polygons]
+#     return half_tangent_max_angles
 
 
 def main():
@@ -1537,33 +1763,38 @@ def main():
     # ])
     pred_polygon_1 = shapely.geometry.Polygon(
         [
-            [0, 0],
-            [10, 0],
-            [20, 20],
-            [0, 10]
+            [0.1, 0.1],
+            [10.1, 0],
+            [9.9, 9],
+            [9, 10.1],
+            [0.1, 10]
         ],
-        # [[
-        #     [0.1, 0.1],
-        #     [0.9, 0.1],
-        #     [0.9, 0.9],
-        #     [0.1, 0.9]
-        # ]]
+        # [
+        #     [0, 0],
+        #     [10, 0],
+        #     [10, 9],
+        #     [10, 10],
+        #     [9, 10],
+        #     [0, 10]
+        # ],
     )
     pred_polygons = [pred_polygon_1]
     gt_polygons = [gt_polygon_1]
 
-    normal_cosine_distances, sampled_pred_polygons, projected_pred_polygons = compute_polygon_contour_distances(pred_polygons, gt_polygons, sample_density=0.5, tolerance=5, max_stretch=2)
+    max_angle_diffs = compute_polygon_contour_measures(pred_polygons, gt_polygons, sampling_spacing=0.1, min_precision=0.5, max_stretch=2)
+    # half_tangent_max_angles = compute_vertex_measures(pred_polygons, gt_polygons, min_precision=0.5)
+
+    # print(cosine_similarities.mean())
+    print(max_angle_diffs[0] * 180 / np.pi)
 
     fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(8, 4), sharex=True, sharey=True)
     ax = axes.ravel()
 
     plot_geometries(ax[0], gt_polygons)
-    plot_geometries(ax[1], sampled_pred_polygons)
-    plot_geometries(ax[2], projected_pred_polygons)
-    print(normal_cosine_distances)
-    print(np.min(normal_cosine_distances))
-    print(np.mean(normal_cosine_distances))
-    print(np.max(normal_cosine_distances))
+    plot_geometries(ax[1], pred_polygons)
+    # plot_geometries(ax[2], projected_pred_contours)
+    for point in POINTS:
+        ax[2].plot(*point.xy, marker="o", markersize=1)
 
     fig.tight_layout()
     plt.show()
