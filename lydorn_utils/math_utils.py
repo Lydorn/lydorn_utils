@@ -402,9 +402,9 @@ else:
 def circular_diff(a1, a2, range_max):
     """
     Compute difference between a1 and a2 belonging to the circular interval [0, range_max).
-    For example to compute angle different, use range_max=2*PI for example.
+    For example to compute angle difference, use range_max=2*PI.
     a1 and a2 must be between range_min and range_max!
-    Thus difference beteeen 0 and range_max is 0.
+    Thus difference between 0 and range_max is 0.
     :param a1: numpy array
     :param a2: numpy array
     :param range_max:
