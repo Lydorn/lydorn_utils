@@ -10,27 +10,27 @@ class bcolors:
     UNDERLINE = '\033[4m'
 
 
-def print_info(*args: str):
+def print_info(*args):
     print(bcolors.OKBLUE + " ".join(map(str, args)) + bcolors.ENDC)
 
 
-def print_success(*args: str):
+def print_success(*args):
     print(bcolors.OKGREEN + " ".join(map(str, args)) + bcolors.ENDC)
 
 
-def print_failure(*args: str):
+def print_failure(*args):
     print(bcolors.FAIL + " ".join(map(str, args)) + bcolors.ENDC)
 
 
-def print_error(*args: str):
+def print_error(*args):
     print_failure(*args)
 
 
-def print_warning(*args: str):
+def print_warning(*args):
     print(bcolors.WARNING + " ".join(map(str, args)) + bcolors.ENDC)
 
 
-def print_debug(*args: str):
+def print_debug(*args):
     print(bcolors.DEBUG + " ".join(map(str, args)) + bcolors.ENDC)
 
 
