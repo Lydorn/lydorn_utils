@@ -169,7 +169,7 @@ def get_polygons_from_osm(image_filepath, tag="", ij_coords=True):
     return polygons
 
 
-def get_polygons_from_shapefile(image_filepath, input_shapefile_filepath):
+def get_polygons_from_shapefile(image_filepath, input_shapefile_filepath, progressbar=True):
     def process_one_polygon(polygon):
         assert len(polygon.shape) == 2, "polygon should have shape (n, d), not {}".format(polygon.shape)
         if 2 < polygon.shape[1]:
@@ -196,7 +196,11 @@ def get_polygons_from_shapefile(image_filepath, input_shapefile_filepath):
     feature_count = shape.GetFeatureCount()
     polygons = []
     properties_list = []
-    for feature_index in tqdm(range(feature_count), desc="Reading features", leave=False):
+    if progressbar:
+        iterator = tqdm(range(feature_count), desc="Reading features", leave=False)
+    else:
+        iterator = range(feature_count)
+    for feature_index in iterator:
         feature = shape.GetFeature(feature_index)
         raw_json = feature.ExportToJson()
         parsed_json = json.loads(raw_json)

@@ -11,6 +11,8 @@ import skimage
 from descartes import PolygonPatch
 from matplotlib.collections import PatchCollection
 from multiprocess import Pool
+import multiprocess
+from tqdm import tqdm
 
 from lydorn_utils import python_utils
 
@@ -1601,7 +1603,7 @@ def compute_contour_measure(pred_polygon, gt_contours, sampling_spacing, max_str
         return None
 
 
-def compute_polygon_contour_measures(pred_polygons: list, gt_polygons: list, sampling_spacing: float, min_precision: float, max_stretch: float, metric_name: str="cosine"):
+def compute_polygon_contour_measures(pred_polygons: list, gt_polygons: list, sampling_spacing: float, min_precision: float, max_stretch: float, metric_name: str="cosine", progressbar=False):
     """
     pred_polygons are sampled with sampling_spacing before projecting those sampled points to gt_polygons.
     Then the
@@ -1629,8 +1631,13 @@ def compute_polygon_contour_measures(pred_polygons: list, gt_polygons: list, sam
     # Extract contours of gt polygons
     gt_contours = shapely.geometry.collection.GeometryCollection([contour for polygon in gt_polygons for contour in [polygon.exterior, *polygon.interiors]])
     # Measure metric for each pred polygon
+    if progressbar:
+        process_id = int(multiprocess.current_process().name[-1])
+        iterator = tqdm(filtered_pred_polygons, desc="Contour measure", leave=False, position=process_id)
+    else:
+        iterator = filtered_pred_polygons
     half_tangent_max_angles = [compute_contour_measure(pred_polygon, gt_contours, sampling_spacing=sampling_spacing, max_stretch=max_stretch, metric_name=metric_name)
-                               for pred_polygon in filtered_pred_polygons]
+                               for pred_polygon in iterator]
     return half_tangent_max_angles
 
 
