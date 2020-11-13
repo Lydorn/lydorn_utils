@@ -345,6 +345,7 @@ def save_shapefile_from_shapely_polygons(polygons, image_filepath, output_shapef
     shp_proj = Transformer.from_proj(raster_srs, shp_srs).transform
 
     # Write a new Shapefile
+    os.makedirs(os.path.dirname(output_shapefile_filepath), exist_ok=True)
     with fiona.open(output_shapefile_filepath, 'w', driver='ESRI Shapefile', schema=schema, crs=fiona.crs.from_epsg(4326)) as c:
         for id, polygon in enumerate(polygons):
             # print("---")
