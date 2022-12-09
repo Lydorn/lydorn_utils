@@ -339,10 +339,10 @@ def save_shapefile_from_shapely_polygons(polygons, image_filepath, output_shapef
     shp_crs = "EPSG:4326"
     shp_srs = Proj(shp_crs)
     raster = rasterio.open(image_filepath)
-    raster_srs = Proj(raster.crs)
+    # raster_srs = Proj(raster.crs)
     raster_proj = lambda x, y: raster.transform * (x, y)
     # shp_proj = functools.partial(transform, raster_srs, shp_srs)
-    shp_proj = Transformer.from_proj(raster_srs, shp_srs).transform
+    # shp_proj = Transformer.from_proj(raster_srs, shp_srs).transform
 
     # Write a new Shapefile
     os.makedirs(os.path.dirname(output_shapefile_filepath), exist_ok=True)
