@@ -336,8 +336,6 @@ def save_shapefile_from_shapely_polygons(polygons, image_filepath, output_shapef
         'geometry': 'Polygon',
         'properties': {'id': 'int'},
     }
-    shp_crs = "EPSG:4326"
-    shp_srs = Proj(shp_crs)
     raster = rasterio.open(image_filepath)
     # raster_srs = Proj(raster.crs)
     raster_proj = lambda x, y: raster.transform * (x, y)
@@ -346,7 +344,7 @@ def save_shapefile_from_shapely_polygons(polygons, image_filepath, output_shapef
 
     # Write a new Shapefile
     os.makedirs(os.path.dirname(output_shapefile_filepath), exist_ok=True)
-    with fiona.open(output_shapefile_filepath, 'w', driver='ESRI Shapefile', schema=schema, crs=fiona.crs.from_epsg(4326)) as c:
+    with fiona.open(output_shapefile_filepath, 'w', driver='ESRI Shapefile', schema=schema) as c:
         for id, polygon in enumerate(polygons):
             # print("---")
             # print(polygon)
